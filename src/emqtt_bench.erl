@@ -27,6 +27,8 @@
 	  "mqtt server port number"},
 	 {version, $V, "version", {integer, 5},
 	  "mqtt protocol version: 3 | 4 | 5"},
+	 {devtype, $d, "devtype", {string, "sensor"},
+	  "simulated device type"},
 	 {count, $c, "count", {integer, 200},
 	  "max count of clients"},
 	 {startnumber, $n, "startnumber", {integer, 0},
@@ -43,6 +45,12 @@
 	  "topic subscribe, support %u, %c, %i "
 	  "variables"},
 	 {size, $s, "size", {integer, 256}, "payload size"},
+	 {dp, undefined, "dp", {string, "t"},
+	  "data point meaning"},
+	 {min, $M, "min", {integer, 0},
+	  "minimal value for sensor data"},
+	 {max, $X, "max", {integer, 100},
+	  "maximal value for sensor data"},
 	 {qos, $q, "qos", {integer, 0}, "subscribe qos"},
 	 {retain, $r, "retain", {boolean, false},
 	  "retain message"},
@@ -314,8 +322,15 @@ subscribe(Client, Opts) ->
 publish(Client, Opts) ->
     Flags = [{qos, proplists:get_value(qos, Opts)},
 	     {retain, proplists:get_value(retain, Opts)}],
-    Payload = proplists:get_value(payload, Opts),
-    emqtt:publish(Client, topic_opt(Opts), Payload, Flags).
+    Min = proplists:get_value(min, Opts),
+    Max = proplists:get_value(max, Opts),
+    DP = proplists:get_value(dp, Opts),
+    Value = Min + rand:uniform(Max - Min),
+    Payload = list_to_binary(io_lib:format("{'~s':~w}",
+					   [DP, Value])),
+    Topic = topic_opt(Opts),
+    % io:format("pub to topic:~w~n", [binary_to_list(Topic)]),
+    emqtt:publish(Client, Topic, Payload, Flags).
 
 mqtt_opts(Opts) -> mqtt_opts(Opts, []).
 
@@ -363,14 +378,9 @@ ssl_opts([{certfile, CertFile} | Opts], Acc) ->
     ssl_opts(Opts, [{certfile, CertFile} | Acc]);
 ssl_opts([_ | Opts], Acc) -> ssl_opts(Opts, Acc).
 
-client_id(PubSub, N, Opts) ->
-    Prefix = case proplists:get_value(ifaddr, Opts) of
-	       undefined -> {ok, Host} = inet:gethostname(), Host;
-	       IfAddr -> IfAddr
-	     end,
-    list_to_binary(lists:concat([Prefix, "_bench_",
-				 atom_to_list(PubSub), "_", N, "_",
-				 rand:uniform(4294967295)])).
+client_id(_PubSub, N, Opts) ->
+    Prefix = proplists:get_value(devtype, Opts),
+    list_to_binary(lists:concat([Prefix, "_", N])).
 
 topics_opt(Opts) ->
     Topics = topics_opt(Opts, []),
@@ -390,7 +400,7 @@ feed_var(Topic, Opts) when is_binary(Topic) ->
     Props = [{Var, bin(proplists:get_value(Key, Opts))}
 	     || {Key, Var}
 		    <- [{seq, <<"%i">>}, {client_id, <<"%c">>},
-			{username, <<"%u">>}]],
+			{username, <<"%u">>}, {devtype, <<"%d">>}]],
     lists:foldl(fun ({_Var, undefined}, Acc) -> Acc;
 		    ({Var, Val}, Acc) -> feed_var(Var, Val, Acc)
 		end,
